@@ -1,0 +1,289 @@
+---
+title: "Course Draft Part A"
+author: "10247802"
+output: html_document
+date: "2024-03-18"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Part A: Metropolis-Hastings Algorithm
+
+#### Setting Up Libraries
+
+We will be importing the following libraries for our exploration into Markov Chain Monte Carlo Algorithms. We will be working with NumPy to help us with mathematical functions and random number generation. Seaborn and Matplotlib gives us the tools for visualising our data.
+
+```{r}
+if (!("dplyr" %in% installed.packages())) {  #! = not in 
+  install.packages("dplyr")
+}
+library("dplyr")
+
+if (!("ggplot2" %in% installed.packages())){
+  install.packages("ggplot2")
+}
+library("ggplot2")
+```
+
+#### Random Number Generator
+
+The use setting a `rng` object with a predetermined seed allows for reproducibility of results.
+
+```{r}
+set.seed(1)  # Set the random seed to 1
+```
+
+#### Define our Target Distribution
+
+The target distribution is defined as having density function of:
+
+$$
+f(x) = \frac{1}{2}{\exp(-|x|)}, \textrm{where} \ x \ \epsilon \ \mathbb{R}.
+\\ \textrm{(Note: this is Laplace Distribution with parameters } \mu=0, b=1)
+$$
+
+```{r}
+target_dist <- function(x) {
+  return(exp(-abs(x)) / 2)
+}
+```
+
+#### Define Random Walk Metropolis Algorithm
+
+We are tasked with generating $x_0,x_1...,x_N$ values and storing them in a version of the Metropolis-Hastings algorithm consisting of the following steps:
+
+Step 1: Set up initial value $x_0$ as well as a positive integer $N$ and a positive real number $s$.
+
+Step 2: Repeat for $i = 1,...,N$ :
+
+-   simulate a random number $x_*$ from the Normal Distribution with mean $x_{i-1}$ and standard deviation $s$.
+
+-   compute the ratio: $$r(x_*,x_{i-1}) = \frac{f(x_*)}{f(x_{i-1})}.$$
+
+-   generate a random number $u$ from the Uniform Distribution between 0 and 1.
+
+-   if $u < r(x_*,x_{i-1})$, set $x_i = x_*$, else set $x_i = x_{i-1}$.
+
+We used the equivalent criterion $\log{u} < \log{r(x_*,x_{i-1})} = \log{f(x_*)} - \log{f(x_{i-1})}$ to avoid numerical errors.
+
+```{r}
+metro_algo <- function(N, s, initial_value) {
+  target_samples <- vector("numeric", N)  # Initialize an empty vector for target samples
+  x_0 <- initial_value  # Set the initial value
+  
+  for (i in 1:N) {
+    if (i > 1) {
+      xi_1 <- target_samples[i - 1]
+    } else {
+      xi_1 <- 0
+    }
+    
+    # Simulate a random number x_star from the Normal distribution
+    x_star <- rnorm(1, mean = xi_1, sd = s)
+    
+    # Compute the ratio r(x_k, current_value)
+    ratio <- target_dist(x_star) / target_dist(xi_1)
+    
+    # Generate a random number u from the uniform distribution
+    u <- runif(1, min = 0.0, max = 1.0)
+    
+    # Check the acceptance criterion
+    if (log(u) < log(ratio)) {
+      target_samples[i] <- x_star
+    } else {
+      target_samples[i] <- xi_1
+    }
+  }
+  
+  return(target_samples)
+}
+
+# Parameters
+N <- 10000
+s <- 1
+initial_value <- 0
+```
+
+#### Part (a): Application of random walk Metropolis Algorithm
+
+We then applied the algorithm using the following parameters $N = 10000$ and $s = 1$. Afterwards we plotted the generated samples $(x_1,...,x_N)$ as a histogram and a kernel density plot in the same figure. We then overlay a graph of the target distribution $f(x)$ on the figure to visualize the quality of the estimates.
+
+```{r}
+# Generate samples using the metro_algo function
+samples <- metro_algo(N, s, initial_value)
+
+# Create a data frame for plotting
+df <- data.frame(x = samples)
+
+# Create the ggplot
+ggplot(df, aes(x)) +
+  geom_histogram(aes(y = ..density.., fill = "Generated Samples"), bins = 30, color = "white", alpha = 0.7) +
+  geom_density(aes(color = "KDE Plot"), size = 1) +
+  stat_function(aes(color = "Target Distribution"), fun = target_dist, size = 1) +
+  scale_color_manual(name = "Legend",
+                     values = c("KDE Plot" = "orange", "Target Distribution" = "lightcoral"),
+                     labels = c("KDE Plot", "Target Distribution")) +
+  scale_fill_manual(name = "Legend",
+                    values = c("Generated Samples" = "lightblue"),
+                    labels = c("Generated Samples")) +
+  labs(title = "Random walk Metropolis",
+       x = "x",
+       y = "Density") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position = "top",
+        legend.title = element_blank())
+```
+
+We then calculated the Monte Carlo estimates of the mean and standard deviation.
+
+```{r}
+mc_mean <- mean(samples)
+mc_std <- sd(samples)
+
+cat(sprintf("Monte Carlo estimate of Mean (Sample Mean): %.4f\n", mc_mean))
+cat(sprintf("Monte Carlo estimate of Standard Deviation (Sample Standard Deviation): %.4f\n", mc_std))
+```
+
+#### Part (b): Analyzing Convergence using Gelman-Rubin $\hat{R}$ statistic
+
+We assumed that the algorithm would converge in the first part of the question. In order to assess convergence, we obtain a value of the $\hat{R}$ statistic using the following procedure.
+
+-   Generate more than one chain of $x_0,...,x_N$ using different initial values of $x_0$. We then denote each of these chains as $(x_0^{(j)},x_1^{(j)}...,x_N^{(j)})$ for $j = 1,2...,J$.
+
+```{r}
+metro_chain <- function(N, target_dist, s, initial_value) {
+ chain <- c(initial_value)
+ 
+ for (i in 2:N) {
+   xi_1 <- chain[i - 1]
+   x_star <- rnorm(1, mean = xi_1, sd = s)
+   ratio <- target_dist(x_star) / target_dist(xi_1)
+   u <- runif(1, min = 0.0, max = 1.0)
+   
+   if (log(u) < log(ratio)) {
+     chain[i] <- x_star
+   } else {
+     chain[i] <- xi_1
+   }
+ }
+ 
+ return(chain)
+}
+
+# Set parameters
+N <- 2000  # Number of iterations in each chain
+J <- 4     # Number of chains
+
+# Set the seed for reproducibility
+set.seed(42)
+
+# Generate J chains with different initial values
+initial_values <- c(0.0, 1.0, -1.0, 2.0)  # You can set different initial values for each chain
+chains <- lapply(initial_values, function(iv) metro_chain(N, target_dist, s = 0.001, initial_value = iv))
+```
+
+-   We define and compute $M_j$ as the sample mean of chain $j$ as: $$ M_j = \frac{1}{N}\sum_{i = 1}^{N}x_i^{(j)}. $$
+
+```{r}
+compute_sample_mean <- function(chain) {
+  return(mean(chain))
+}
+
+sample_means <- lapply(chains, compute_sample_mean)
+
+for (j in 1:length(sample_means)) {
+  cat(sprintf("Mean of Chain %d (M%d): %f\n", j, j, sample_means[[j]]))
+}
+```
+
+-   We define and compute $V_j$ as the sample variance of chain $j$ as: $$ V_j = \frac{1}{N}\sum_{i = 1}^{N}(x_i^{(j)} - M_j)^2. $$
+
+```{r}
+compute_sample_variance <- function(chain, sample_mean) {
+  N <- length(chain)
+  return(sum((chain - sample_mean)^2) / N)
+}
+
+sample_variances <- mapply(compute_sample_variance, chains, sample_means)
+
+for (j in 1:length(sample_variances)) {
+  cat(sprintf("Variance of Chain %d (V%d): %f\n", j, j, sample_variances[j]))
+}
+```
+
+-   We define and compute overall within sample variance $W$ as: $$ W = \frac{1}{J}\sum_{j=1}^{J}V_j.$$
+
+```{r}
+overall_within_variance <- mean(sample_variances)
+
+cat(sprintf("Overall Within-Sample Variance (W): %f\n", overall_within_variance))
+```
+
+-   We define and compute overall sample mean $M$ as: $$ M = \frac{1}{J}\sum_{j=1}^{J}M_j.$$
+
+```{r}
+overall_sample_mean <- mean(unlist(sample_means))
+
+cat(sprintf("Overall Sample Mean (M): %f\n", overall_sample_mean))
+```
+
+-   We define and compute the between sample variance $B$ as: $$ B = \frac{1}{J}\sum_{j=1}^{J}(M_j - M)^2.$$
+
+```{r}
+sample_means_num <- unlist(sample_means)
+between_sample_variance <- mean(sum((sample_means_num - overall_sample_mean)^2))
+
+cat(sprintf("Between-Sample Variance (B): %f\n", between_sample_variance))
+```
+
+-   Finally, we compute the $\hat{R}$ value as: $$ \hat{R} = \sqrt\frac{B+W}{W} $$
+
+```{r}
+rhat_value <- sqrt((between_sample_variance + overall_within_variance) / overall_within_variance)
+
+cat(sprintf("Gelman-Rubin R-hat Value: %f\n", rhat_value))
+```
+
+Now keeping $N$ and $J$ fixed, we plot a range of values of $\hat{R}$ over a grid of $s$ values in the interval between 0.0001 and 1.
+
+```{r}
+gelman_rubin_rhat <- function(N, J, target_dist, s_values) {
+  rhat_values <- numeric(length(s_values))
+  
+  for (i in seq_along(s_values)) {
+    s <- s_values[i]
+    chains <- lapply(1:J, function(j) metro_chain(N, target_dist, s, initial_value = j))
+    
+    sample_means <- sapply(chains, mean)
+    between_sample_variance <- sum((sample_means - mean(sample_means))^2) / J
+    overall_within_variance <- mean(sapply(chains, var))
+    
+    rhat_value <- sqrt((between_sample_variance + overall_within_variance) / overall_within_variance)
+    rhat_values[i] <- rhat_value
+  }
+  
+  return(rhat_values)
+}
+
+# Parameters
+N <- 2000
+J <- 4
+s_values <- seq(0.001, 1, length.out = 100)
+
+# Calculate R-hat values
+rhat_values <- gelman_rubin_rhat(N, J, target_dist, s_values)
+
+# Create a data frame for plotting
+df <- data.frame(s_values = s_values, rhat_values = rhat_values)
+
+# Create the ggplot
+ggplot(df, aes(x = s_values, y = rhat_values)) +
+  geom_line() +
+  geom_point() +
+  labs(x = "s values", y = "Gelman-Rubin R-hat", title = "Gelman-Rubin R-hat vs. s values") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+```
